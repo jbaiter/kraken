@@ -1,0 +1,4 @@
+[submodule "clstm_cython"]
+	path = clstm
+	url = https://github.com/jbaiter/clstm
+	branch = cython

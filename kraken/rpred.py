@@ -23,10 +23,12 @@ from builtins import object
 
 import numpy as np
 import bidi.algorithm as bd
+from PIL import ImageOps
 
 from kraken.lib import lstm
 from kraken.lib.util import pil2array, array2pil
 from kraken.lib.lineest import CenterNormalizer
+from kraken.lib.models import ClstmSeqRecognizer
 from kraken.lib.exceptions import KrakenInputException
 
 
@@ -171,6 +173,10 @@ def rpred(network, im, bounds, pad=16, line_normalization=True, bidi_reordering=
         An ocr_record containing the recognized text, absolute character
         positions, and confidence values for each character. 
     """
+    if isinstance(network, ClstmSeqRecognizer):
+        for out in _rpred_clstm(network, im, bounds, pad, bidi_reordering):
+            yield out
+        raise StopIteration
 
     lnorm = getattr(network, 'lnorm', CenterNormalizer())
 
@@ -179,21 +185,24 @@ def rpred(network, im, bounds, pad=16, line_normalization=True, bidi_reordering=
         if sum(coords[::2]) == False or coords[3] - coords[1] == False:
             yield ocr_record('', [], [])
             continue
-        raw_line = pil2array(box)
-        # check if line is non-zero
-        if np.amax(raw_line) == np.amin(raw_line):
-            yield ocr_record('', [], [])
-            continue
-        if line_normalization:
-            # fail gracefully and return no recognition result in case the
-            # input line can not be normalized.
-            try:
-                box = dewarp(lnorm, box)
-            except:
+        if not isinstance(network, ClstmSeqRecognizer):
+            raw_line = pil2array(box)
+            # check if line is non-zero
+            if np.amax(raw_line) == np.amin(raw_line):
                 yield ocr_record('', [], [])
                 continue
-        line = pil2array(box)
-        line = lstm.prepare_line(line, pad)
+            if line_normalization:
+                # fail gracefully and return no recognition result in case the
+                # input line can not be normalized.
+                try:
+                    box = dewarp(lnorm, box)
+                except:
+                    yield ocr_record('', [], [])
+                    continue
+            line = pil2array(box)
+            line = lstm.prepare_line(line, pad)
+        else:
+            line = box
         pred = network.predictString(line)
 
         # calculate recognized LSTM locations of characters
@@ -205,6 +214,33 @@ def rpred(network, im, bounds, pad=16, line_normalization=True, bidi_reordering=
         for _, start, end, c in result:
             pos.append((coords[0] + int((start-pad)*scale), coords[1], coords[0] + int((end-pad/2)*scale), coords[3]))
             conf.append(c)
+        if bidi_reordering:
+            yield bidi_record(ocr_record(pred, pos, conf))
+        else:
+            yield ocr_record(pred, pos, conf)
+
+
+def _rpred_clstm(net, im, bounds, pad, bidi_reordering):
+    for box, coords in extract_boxes(im, bounds):
+        if pad:
+            colors = box.histogram()
+            box = ImageOps.expand(
+                box, border=(16, 0),
+                fill=max(range(len(colors)), key=lambda x: colors[x]))
+        char_infos = list(net.model.recognize_chars(box))
+        pred = "".join(c.char for c in char_infos)
+        pos = []
+        conf = []
+        for idx, c in enumerate(char_infos):
+            if idx < len(char_infos)-1:
+                rx = coords[0] + char_infos[idx+1].x_position - 1 - pad
+            else:
+                rx = coords[2]
+            pos.append((coords[0] + c.x_position - pad,
+                        coords[1],
+                        rx,
+                        coords[3]))
+            conf.append(c.confidence)
         if bidi_reordering:
             yield bidi_record(ocr_record(pred, pos, conf))
         else:

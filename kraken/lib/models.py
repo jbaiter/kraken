@@ -23,6 +23,8 @@ import bz2
 import sys
 import io
 
+import pyclstm
+
 import kraken.lib.lstm
 import kraken.lib.lineest
 
@@ -37,27 +39,14 @@ class ClstmSeqRecognizer(kraken.lib.lstm.SeqRecognizer):
     """
     def __init__(self, fname, normalize=kraken.lib.lstm.normalize_nfkc):
         self.fname = fname
-        self.rnn = None
-        self.normalize = normalize
-        global clstm
-        import clstm
+        self.model = None
         self.load_model()
 
     def load_model(self):
-        self.rnn = clstm.load_net(self.fname.encode('utf-8'))
+        self.model = pyclstm.ClstmOcr(self.fname.encode('utf8'))
 
     def predictString(self, line):
-        line = line.reshape(-1, self.rnn.ninput(), 1)
-        self.rnn.inputs.aset(line.astype('float32'))
-        self.rnn.forward()
-        self.outputs = self.rnn.outputs.array().reshape(line.shape[0], self.rnn.noutput())
-        codes = kraken.lib.lstm.translate_back(self.outputs)
-        cls = clstm.Classes()
-        cls.resize(len(codes))
-        for i, v in enumerate(codes):
-            cls[i] = v
-        res = self.rnn.decode(cls)
-        return res
+        return self.model.recognize(line)
 
 
 def load_any(fname):
@@ -122,12 +111,12 @@ def load_clstm(fname):
         A SeqRecognizer object
     """
     try:
-        import clstm
+        import pyclstm
     except ImportError:
         raise KrakenInvalidModelException('No clstm module available')
 
     try:
-        clstm.load_net(fname.encode('utf-8'))
+        pyclstm.ClstmOcr(fname.encode('utf8'))
     except Exception as e:
         raise KrakenInvalidModelException(str(e))
     return ClstmSeqRecognizer(fname)
