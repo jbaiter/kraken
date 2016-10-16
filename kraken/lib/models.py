@@ -116,7 +116,8 @@ def load_clstm(fname):
         raise KrakenInvalidModelException('No clstm module available')
 
     try:
-        pyclstm.ClstmOcr(fname.encode('utf8'))
+        ocr = pyclstm.ClstmOcr()
+        ocr.load(fname.encode('utf8'))
     except Exception as e:
         raise KrakenInvalidModelException(str(e))
     return ClstmSeqRecognizer(fname)
